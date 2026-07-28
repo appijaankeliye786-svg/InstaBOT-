@@ -11,48 +11,50 @@ module.exports.config = {
   description: "Create a display picture with frame",
   commandCategory: "Love",
   usages: "[reply to image or photo attachment]",
-  cooldowns: 5
+  cooldowns: 2
 };
 
-module.exports.run = async function ({ api, event }) {
-  const threadID = event.threadID || event.chat_id || event.from || event.thread_id;
-  const messageID = event.messageID || event.message_id || event.mid;
+const cacheDir = path.join(__dirname, "cache", "canvas");
+const templatePath = path.join(cacheDir, "framedp1_template.png");
 
-  const cacheDir = path.join(__dirname, "cache", "canvas");
-  const templatePath = path.join(cacheDir, "framedp1_template.png");
+// Global template cache to avoid repeated downloading
+let loadedTemplate = null;
 
-  const templateUrls = [
-    "https://i.ibb.co/jP5RT6mh/59231906c30e.jpg",
-    "https://i.ibb.co/LX3qWqB3/da0dde329b3c.jpg",
-    "https://i.imgur.com/Gc3Hs2Q.png"
-  ];
+async function getTemplate() {
+  if (loadedTemplate) return loadedTemplate;
+  if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true });
 
-  async function downloadTemplate() {
-    if (!fs.existsSync(cacheDir)) {
-      fs.mkdirSync(cacheDir, { recursive: true });
-    }
-    if (fs.existsSync(templatePath)) return true;
+  if (!fs.existsSync(templatePath)) {
+    const templateUrls = [
+      "https://i.ibb.co/jP5RT6mh/59231906c30e.jpg",
+      "https://i.ibb.co/LX3qWqB3/da0dde329b3c.jpg",
+      "https://i.imgur.com/Gc3Hs2Q.png"
+    ];
 
     for (const url of templateUrls) {
       try {
-        const response = await axios.get(url, { 
-          responseType: "arraybuffer", 
-          timeout: 10000,
-          headers: { 'User-Agent': 'Mozilla/5.0' }
-        });
+        const response = await axios.get(url, { responseType: "arraybuffer", timeout: 8000 });
         if (response.status === 200) {
           fs.writeFileSync(templatePath, Buffer.from(response.data));
-          return true;
+          break;
         }
       } catch (e) {
         continue;
       }
     }
-
-    const fallback = await Jimp.create(800, 800, 0xff69b4);
-    await fallback.writeAsync(templatePath);
-    return true;
+    if (!fs.existsSync(templatePath)) {
+      const fallback = await Jimp.create(800, 800, 0xff69b4);
+      await fallback.writeAsync(templatePath);
+    }
   }
+
+  loadedTemplate = await Jimp.read(templatePath);
+  return loadedTemplate;
+}
+
+module.exports.run = async function ({ api, event }) {
+  const threadID = event.threadID || event.chat_id || event.from || event.thread_id;
+  const messageID = event.messageID || event.message_id || event.mid;
 
   function getImgUrl(ev) {
     if (ev.reply_to_message?.attachments?.[0]?.url) return ev.reply_to_message.attachments[0].url;
@@ -64,40 +66,33 @@ module.exports.run = async function ({ api, event }) {
   }
 
   try {
-    await downloadTemplate();
+    const baseTemplate = await getTemplate();
+    const template = baseTemplate.clone(); // Clone for fast speed
 
     const imgUrl = getImgUrl(event);
-    let imageBuffer = null;
+    let userImage;
 
     if (imgUrl) {
-      const res = await axios.get(imgUrl, { responseType: "arraybuffer", timeout: 10000 });
-      imageBuffer = Buffer.from(res.data);
+      const res = await axios.get(imgUrl, { responseType: "arraybuffer", timeout: 8000 });
+      userImage = await Jimp.read(Buffer.from(res.data));
     } else {
-      const img = await Jimp.create(230, 310, 0xffc0cb);
-      imageBuffer = await img.getBufferAsync(Jimp.MIME_PNG);
+      userImage = await Jimp.create(230, 310, 0xffc0cb);
     }
 
-    const userImage = await Jimp.read(imageBuffer);
     userImage.resize(230, 310);
-
-    const template = await Jimp.read(templatePath);
-    
-    const posX = 210;
-    const posY = 93;
-    
-    template.composite(userImage, posX, posY);
+    template.composite(userImage, 210, 93);
 
     const outputPath = path.join(cacheDir, `framedp1_${Date.now()}.png`);
     await template.writeAsync(outputPath);
 
     const msgText = `✨ 𝐌𝐢𝐬𝐬 𝐀𝐥𝐢𝐲𝐚 ✨\n\n💕 𝐘𝐨𝐮𝐫 𝐅𝐫𝐚𝐦𝐞 𝐃𝐏 𝐢𝐬 𝐫𝐞𝐚𝐝𝐲!`;
 
-    // Fix: Send direct String file path array/string instead of ReadStream
+    // Passing array of path [outputPath] fixes path string error & sends image
     if (api && typeof api.sendMessage === "function") {
       await api.sendMessage(
         {
           body: msgText,
-          attachment: outputPath // Direct string path
+          attachment: fs.existsSync(outputPath) ? [outputPath] : []
         },
         threadID,
         () => {

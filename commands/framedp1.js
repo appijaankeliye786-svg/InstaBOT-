@@ -15,7 +15,6 @@ module.exports.config = {
 };
 
 module.exports.run = async function ({ api, event }) {
-  // Correct thread/chat identification for Instagram framework
   const threadID = event.threadID || event.chat_id || event.from || event.thread_id;
   const messageID = event.messageID || event.message_id || event.mid;
 
@@ -93,16 +92,18 @@ module.exports.run = async function ({ api, event }) {
 
     const msgText = `✨ 𝐌𝐢𝐬𝐬 𝐀𝐥𝐢𝐲𝐚 ✨\n\n💕 𝐘𝐨𝐮𝐫 𝐅𝐫𝐚𝐦𝐞 𝐃𝐏 𝐢𝐬 𝐫𝐞𝐚𝐝𝐲!`;
 
-    // Proper parameter structure for api.sendMessage
+    // Fix: Send direct String file path array/string instead of ReadStream
     if (api && typeof api.sendMessage === "function") {
       await api.sendMessage(
         {
           body: msgText,
-          attachment: fs.createReadStream(outputPath)
+          attachment: outputPath // Direct string path
         },
         threadID,
         () => {
-          if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
+          setTimeout(() => {
+            if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
+          }, 3000);
         },
         messageID
       );

@@ -1,4 +1,3 @@
-const { IgApiClient } = require('@neoaz07/nkxica');
 const axios = require("axios");
 const fs = require("fs-extra");
 const path = require("path");
@@ -6,177 +5,108 @@ const Jimp = require("jimp");
 
 module.exports = {
   name: "framedp1",
-  version: "1.0.0",
-  description: "Create a display picture with profile pic (Instagram Version)",
-  usage: "Reply to an image with /framedp1",
-  cooldown: 5,
+  author: "Miss Aliya 💫",
+  description: "Create a framed DP using image or profile pic",
+  category: "Love",
+  usage: "framedp1 [reply to image or upload]",
 
-  async execute({ client, message, args }) {
-    try {
-      // Check if replying to an image
-      if (!message.quoted) {
-        return message.reply("❌ Please reply to an image with /framedp1");
-      }
+  onStart: async function ({ api, event }) {
+    const threadID = event.threadID || event.chat_id || event.from;
+    const cacheDir = path.join(__dirname, "cache", "canvas");
+    const templatePath = path.join(cacheDir, "framedp1_template.png");
 
-      // Check if quoted message has image
-      const quotedMessage = message.quoted;
-      let imageBuffer = null;
-      
-      // Handle image from Instagram using nkxica
-      if (quotedMessage.image) {
-        try {
-          // Get image URL from the quoted message
-          const imageUrl = quotedMessage.image.url || quotedMessage.image;
-          
-          // Download the image
-          const response = await axios.get(imageUrl, {
-            responseType: 'arraybuffer',
-            timeout: 15000,
-            headers: {
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            }
-          });
-          imageBuffer = Buffer.from(response.data);
-          
-          console.log(`✅ Image downloaded: ${imageBuffer.length} bytes`);
-        } catch (error) {
-          console.error("Error downloading image:", error);
-          return message.reply("❌ Failed to download the image. Please try again.");
-        }
-      } else {
-        return message.reply("❌ Please reply to an image message");
-      }
+    const templateUrls = [
+      "https://i.ibb.co/jP5RT6mh/59231906c30e.jpg",
+      "https://i.ibb.co/LX3qWqB3/da0dde329b3c.jpg",
+      "https://i.imgur.com/Gc3Hs2Q.png",
+      "https://i.imgur.com/q9ZzTkR.png"
+    ];
 
-      // Setup paths
-      const cacheDir = path.join(__dirname, "cache", "canvas");
-      const templatePath = path.join(cacheDir, "framedp1_template.png");
-      const templateUrls = [
-        "https://i.ibb.co/jP5RT6mh/59231906c30e.jpg",
-        "https://i.ibb.co/LX3qWqB3/da0dde329b3c.jpg",
-        "https://i.imgur.com/Gc3Hs2Q.png",
-        "https://i.imgur.com/q9ZzTkR.png"
-      ];
-
-      // Create cache directory if it doesn't exist
+    async function downloadTemplate() {
       if (!fs.existsSync(cacheDir)) {
         fs.mkdirSync(cacheDir, { recursive: true });
       }
+      if (fs.existsSync(templatePath)) return true;
 
-      // Download template if not exists
-      if (!fs.existsSync(templatePath)) {
-        let templateDownloaded = false;
-        
-        // Send status update
-        await message.reply("⏳ Downloading template...");
-        
-        for (const url of templateUrls) {
-          try {
-            console.log(`Trying to download template from: ${url}`);
-            const response = await axios.get(url, {
-              responseType: "arraybuffer",
-              timeout: 15000,
-              headers: { 
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' 
-              }
-            });
-            
-            if (response.status === 200) {
-              fs.writeFileSync(templatePath, Buffer.from(response.data));
-              console.log("✅ Template downloaded successfully!");
-              templateDownloaded = true;
-              break;
-            }
-          } catch (err) {
-            console.log(`❌ Failed to download from ${url}:`, err.message);
-            continue;
+      for (const url of templateUrls) {
+        try {
+          const response = await axios.get(url, { 
+            responseType: "arraybuffer", 
+            timeout: 10000,
+            headers: { 'User-Agent': 'Mozilla/5.0' }
+          });
+          if (response.status === 200) {
+            fs.writeFileSync(templatePath, Buffer.from(response.data));
+            return true;
           }
-        }
-
-        if (!templateDownloaded) {
-          console.log("Creating fallback template...");
-          const fallbackImage = await Jimp.create(800, 800, 0xff69b4);
-          await fallbackImage.writeAsync(templatePath);
+        } catch (e) {
+          continue;
         }
       }
 
-      // Process the image
-      const imgWidth = 230;
-      const imgHeight = 310;
+      // Fallback Template
+      const fallback = await Jimp.create(800, 800, 0xff69b4);
+      await fallback.writeAsync(templatePath);
+      return true;
+    }
+
+    try {
+      await downloadTemplate();
+
+      let imageBuffer = null;
+
+      // Check if user replied to an image
+      if (event.reply_to_message && event.reply_to_message.attachments && event.reply_to_message.attachments[0]) {
+        const url = event.reply_to_message.attachments[0].url;
+        const res = await axios.get(url, { responseType: "arraybuffer" });
+        imageBuffer = Buffer.from(res.data);
+      } else if (event.attachments && event.attachments[0]) {
+        const url = event.attachments[0].url;
+        const res = await axios.get(url, { responseType: "arraybuffer" });
+        imageBuffer = Buffer.from(res.data);
+      }
+
+      if (!imageBuffer) {
+        // Default Fallback Color Box if no image provided
+        const img = await Jimp.create(230, 310, 0x808080);
+        imageBuffer = await img.getBufferAsync(Jimp.MIME_PNG);
+      }
+
+      const userImage = await Jimp.read(imageBuffer);
+      userImage.resize(230, 310);
+
+      const template = await Jimp.read(templatePath);
       
-      // Resize user image
-      let userImage;
-      try {
-        userImage = await Jimp.read(imageBuffer);
-        userImage.resize(imgWidth, imgHeight);
-        console.log("✅ Image resized successfully");
-      } catch (error) {
-        console.error("Error resizing image:", error);
-        userImage = await Jimp.create(imgWidth, imgHeight, 0xff69b4);
-      }
-
-      // Load template
-      let template;
-      try {
-        template = await Jimp.read(templatePath);
-        console.log("✅ Template loaded successfully");
-      } catch (error) {
-        console.error("Error reading template:", error);
-        template = await Jimp.create(800, 800, 0xff69b4);
-      }
-
-      // Composite image at specific position
+      // Position settings
       const posX = 210;
       const posY = 93;
+      
       template.composite(userImage, posX, posY);
 
-      // Save output
       const outputPath = path.join(cacheDir, `framedp1_${Date.now()}.png`);
       await template.writeAsync(outputPath);
-      console.log("✅ Image saved:", outputPath);
 
-      // Send status
-      await message.reply("✨ Processing your frame DP...");
+      const msgText = `✨ 𝐌𝐢𝐬𝐬 𝐀𝐥𝐢𝐲𝐚 ✨\n\n💕 𝐘𝐨𝐮𝐫 𝐅𝐫𝐚𝐦𝐞 𝐃𝐏 𝐢𝐬 𝐫𝐞𝐚𝐝𝐲!`;
 
-      // Send the image to Instagram using nkxica
-      try {
-        // For nkxica, we need to send as image buffer or file
-        const imageFile = fs.readFileSync(outputPath);
-        
-        await client.sendImage(
-          message.from,
-          outputPath,
-          `✨ Your Frame DP is ready!`
-        );
-        
-        console.log("✅ Image sent successfully");
-      } catch (sendError) {
-        console.error("Error sending image:", sendError);
-        
-        // Alternative: Send as buffer
-        try {
-          const imageBuffer2 = fs.readFileSync(outputPath);
-          await client.sendImage(
-            message.from,
-            imageBuffer2,
-            `✨ Your Frame DP is ready!`
-          );
-        } catch (sendError2) {
-          console.error("Both send methods failed:", sendError2);
-          return message.reply("❌ Failed to send the image. Please try again.");
-        }
+      // Send image back to Instagram chat
+      if (api.sendAttachment) {
+        await api.sendAttachment(threadID, outputPath, msgText);
+      } else if (api.sendMessage) {
+        await api.sendMessage(threadID, {
+          body: msgText,
+          attachment: fs.createReadStream(outputPath)
+        });
       }
 
-      // Cleanup
-      try {
-        fs.unlinkSync(outputPath);
-        console.log("✅ Cleanup completed");
-      } catch (e) {
-        console.log("Cleanup error:", e.message);
-      }
+      setTimeout(() => {
+        if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
+      }, 5000);
 
     } catch (error) {
-      console.error("framedp1 command error:", error);
-      return message.reply("❌ Error creating DP! " + error.message);
+      console.error("framedp1 error:", error);
+      if (api.sendMessage) {
+        api.sendMessage(threadID, "❌ Error creating DP: " + error.message);
+      }
     }
   }
 };

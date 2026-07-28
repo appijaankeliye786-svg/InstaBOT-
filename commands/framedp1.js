@@ -8,22 +8,24 @@ module.exports.config = {
   version: "1.0.0",
   hasPermssion: 0,
   credits: "Miss Aliya 💫",
-  description: "Create a display picture with profile pic",
+  description: "Create a display picture with frame",
   commandCategory: "Love",
-  usages: "[@mention or reply to image]",
+  usages: "[reply to image or photo attachment]",
   cooldowns: 5
 };
 
-module.exports.run = async ({ api, event }) => {
-  const threadID = event.threadID || event.chat_id || event.from;
+module.exports.run = async function ({ api, event }) {
+  // Correct thread/chat identification for Instagram framework
+  const threadID = event.threadID || event.chat_id || event.from || event.thread_id;
+  const messageID = event.messageID || event.message_id || event.mid;
+
   const cacheDir = path.join(__dirname, "cache", "canvas");
   const templatePath = path.join(cacheDir, "framedp1_template.png");
 
   const templateUrls = [
     "https://i.ibb.co/jP5RT6mh/59231906c30e.jpg",
     "https://i.ibb.co/LX3qWqB3/da0dde329b3c.jpg",
-    "https://i.imgur.com/Gc3Hs2Q.png",
-    "https://i.imgur.com/q9ZzTkR.png"
+    "https://i.imgur.com/Gc3Hs2Q.png"
   ];
 
   async function downloadTemplate() {
@@ -53,23 +55,26 @@ module.exports.run = async ({ api, event }) => {
     return true;
   }
 
+  function getImgUrl(ev) {
+    if (ev.reply_to_message?.attachments?.[0]?.url) return ev.reply_to_message.attachments[0].url;
+    if (ev.reply_to_message?.photo?.[0]?.url) return ev.reply_to_message.photo[0].url;
+    if (ev.messageReply?.attachments?.[0]?.url) return ev.messageReply.attachments[0].url;
+    if (ev.attachments?.[0]?.url) return ev.attachments[0].url;
+    if (ev.photo?.[0]?.url) return ev.photo[0].url;
+    return null;
+  }
+
   try {
     await downloadTemplate();
 
+    const imgUrl = getImgUrl(event);
     let imageBuffer = null;
 
-    if (event.reply_to_message && event.reply_to_message.attachments && event.reply_to_message.attachments[0]) {
-      const url = event.reply_to_message.attachments[0].url;
-      const res = await axios.get(url, { responseType: "arraybuffer" });
+    if (imgUrl) {
+      const res = await axios.get(imgUrl, { responseType: "arraybuffer", timeout: 10000 });
       imageBuffer = Buffer.from(res.data);
-    } else if (event.attachments && event.attachments[0]) {
-      const url = event.attachments[0].url;
-      const res = await axios.get(url, { responseType: "arraybuffer" });
-      imageBuffer = Buffer.from(res.data);
-    }
-
-    if (!imageBuffer) {
-      const img = await Jimp.create(230, 310, 0x808080);
+    } else {
+      const img = await Jimp.create(230, 310, 0xffc0cb);
       imageBuffer = await img.getBufferAsync(Jimp.MIME_PNG);
     }
 
@@ -88,23 +93,25 @@ module.exports.run = async ({ api, event }) => {
 
     const msgText = `✨ 𝐌𝐢𝐬𝐬 𝐀𝐥𝐢𝐲𝐚 ✨\n\n💕 𝐘𝐨𝐮𝐫 𝐅𝐫𝐚𝐦𝐞 𝐃𝐏 𝐢𝐬 𝐫𝐞𝐚𝐝𝐲!`;
 
-    if (api.sendAttachment) {
-      await api.sendAttachment(threadID, outputPath, msgText);
-    } else if (api.sendMessage) {
-      await api.sendMessage(threadID, {
-        body: msgText,
-        attachment: fs.createReadStream(outputPath)
-      });
+    // Proper parameter structure for api.sendMessage
+    if (api && typeof api.sendMessage === "function") {
+      await api.sendMessage(
+        {
+          body: msgText,
+          attachment: fs.createReadStream(outputPath)
+        },
+        threadID,
+        () => {
+          if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
+        },
+        messageID
+      );
     }
-
-    setTimeout(() => {
-      if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
-    }, 5000);
 
   } catch (error) {
     console.error("framedp1 error:", error);
-    if (api.sendMessage) {
-      api.sendMessage(threadID, "❌ Error creating DP: " + error.message);
+    if (api && typeof api.sendMessage === "function") {
+      api.sendMessage("❌ Error creating DP: " + error.message, threadID, messageID);
     }
   }
 };

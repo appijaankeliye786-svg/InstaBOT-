@@ -1,3 +1,4 @@
+const { IgApiClient } = require('@neoaz07/nkxica');
 const axios = require("axios");
 const fs = require("fs-extra");
 const path = require("path");
@@ -10,7 +11,7 @@ module.exports = {
   usage: "Reply to an image with /framedp1",
   cooldown: 5,
 
-  async execute(client, message, args) {
+  async execute({ client, message, args }) {
     try {
       // Check if replying to an image
       if (!message.quoted) {
@@ -21,22 +22,26 @@ module.exports = {
       const quotedMessage = message.quoted;
       let imageBuffer = null;
       
-      // Handle different image sources for Instagram
+      // Handle image from Instagram using nkxica
       if (quotedMessage.image) {
         try {
-          // Download the image from Instagram
-          const imageUrl = await client.getMediaUrl(quotedMessage.image, {
-            type: 'image'
-          });
+          // Get image URL from the quoted message
+          const imageUrl = quotedMessage.image.url || quotedMessage.image;
           
+          // Download the image
           const response = await axios.get(imageUrl, {
             responseType: 'arraybuffer',
-            timeout: 10000
+            timeout: 15000,
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }
           });
           imageBuffer = Buffer.from(response.data);
+          
+          console.log(`✅ Image downloaded: ${imageBuffer.length} bytes`);
         } catch (error) {
           console.error("Error downloading image:", error);
-          return message.reply("❌ Failed to download the image");
+          return message.reply("❌ Failed to download the image. Please try again.");
         }
       } else {
         return message.reply("❌ Please reply to an image message");
@@ -60,25 +65,35 @@ module.exports = {
       // Download template if not exists
       if (!fs.existsSync(templatePath)) {
         let templateDownloaded = false;
+        
+        // Send status update
+        await message.reply("⏳ Downloading template...");
+        
         for (const url of templateUrls) {
           try {
+            console.log(`Trying to download template from: ${url}`);
             const response = await axios.get(url, {
               responseType: "arraybuffer",
-              timeout: 10000,
-              headers: { 'User-Agent': 'Mozilla/5.0' }
+              timeout: 15000,
+              headers: { 
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' 
+              }
             });
+            
             if (response.status === 200) {
               fs.writeFileSync(templatePath, Buffer.from(response.data));
+              console.log("✅ Template downloaded successfully!");
               templateDownloaded = true;
               break;
             }
           } catch (err) {
+            console.log(`❌ Failed to download from ${url}:`, err.message);
             continue;
           }
         }
 
         if (!templateDownloaded) {
-          // Create fallback template
+          console.log("Creating fallback template...");
           const fallbackImage = await Jimp.create(800, 800, 0xff69b4);
           await fallbackImage.writeAsync(templatePath);
         }
@@ -93,6 +108,7 @@ module.exports = {
       try {
         userImage = await Jimp.read(imageBuffer);
         userImage.resize(imgWidth, imgHeight);
+        console.log("✅ Image resized successfully");
       } catch (error) {
         console.error("Error resizing image:", error);
         userImage = await Jimp.create(imgWidth, imgHeight, 0xff69b4);
@@ -102,7 +118,9 @@ module.exports = {
       let template;
       try {
         template = await Jimp.read(templatePath);
+        console.log("✅ Template loaded successfully");
       } catch (error) {
+        console.error("Error reading template:", error);
         template = await Jimp.create(800, 800, 0xff69b4);
       }
 
@@ -112,24 +130,53 @@ module.exports = {
       template.composite(userImage, posX, posY);
 
       // Save output
-      const outputPath = path.join(cacheDir, `framedp1_${message.from}_${Date.now()}.png`);
+      const outputPath = path.join(cacheDir, `framedp1_${Date.now()}.png`);
       await template.writeAsync(outputPath);
+      console.log("✅ Image saved:", outputPath);
 
-      // Send the image to Instagram
-      await client.sendImage(
-        message.from,
-        outputPath,
-        `✨ Your Frame DP is ready!`
-      );
+      // Send status
+      await message.reply("✨ Processing your frame DP...");
+
+      // Send the image to Instagram using nkxica
+      try {
+        // For nkxica, we need to send as image buffer or file
+        const imageFile = fs.readFileSync(outputPath);
+        
+        await client.sendImage(
+          message.from,
+          outputPath,
+          `✨ Your Frame DP is ready!`
+        );
+        
+        console.log("✅ Image sent successfully");
+      } catch (sendError) {
+        console.error("Error sending image:", sendError);
+        
+        // Alternative: Send as buffer
+        try {
+          const imageBuffer2 = fs.readFileSync(outputPath);
+          await client.sendImage(
+            message.from,
+            imageBuffer2,
+            `✨ Your Frame DP is ready!`
+          );
+        } catch (sendError2) {
+          console.error("Both send methods failed:", sendError2);
+          return message.reply("❌ Failed to send the image. Please try again.");
+        }
+      }
 
       // Cleanup
       try {
         fs.unlinkSync(outputPath);
-      } catch (e) {}
+        console.log("✅ Cleanup completed");
+      } catch (e) {
+        console.log("Cleanup error:", e.message);
+      }
 
     } catch (error) {
       console.error("framedp1 command error:", error);
-      return message.reply("❌ Error creating DP! Please try again later.");
+      return message.reply("❌ Error creating DP! " + error.message);
     }
   }
 };
